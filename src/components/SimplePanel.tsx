@@ -1,31 +1,57 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { PanelProps } from '@grafana/data';
-import { SimpleOptions } from 'types';
 import { css, cx } from '@emotion/css';
 import { useStyles2, useTheme2 } from '@grafana/ui';
 import { PanelDataErrorView } from '@grafana/runtime';
+import { SimpleOptions } from '../types';
 
 interface Props extends PanelProps<SimpleOptions> {}
 
-const getStyles = () => {
-  return {
-    wrapper: css`
-      font-family: Open Sans;
-      position: relative;
-    `,
-    svg: css`
-      position: absolute;
-      top: 0;
-      left: 0;
-    `,
-    textBox: css`
-      position: absolute;
-      bottom: 0;
-      left: 0;
-      padding: 10px;
-    `,
-  };
-};
+const getStyles = () => ({
+  wrapper: css`
+    position: relative;
+    border-radius: 12px;
+    overflow: hidden;
+    font-family: Open Sans, system-ui, sans-serif;
+  `,
+  content: css`
+    width: 100%;
+    height: 100%;
+    padding: 12px;
+  `,
+  card: css`
+    position: absolute;
+    left: 12px;
+    bottom: 12px;
+    padding: 12px;
+    border-radius: 10px;
+    max-width: calc(100% - 24px);
+    font-size: 13px;
+  `,
+  pill: css`
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 6px;
+  `,
+});
+
+function extractNumericValues(data: Props['data']): number[] {
+  const values: number[] = [];
+  for (const frame of data.series ?? []) {
+    for (const field of frame.fields) {
+      if (field.type === 'number') {
+        for (const v of field.values as unknown as number[]) {
+          if (Number.isFinite(v)) values.push(v);
+        }
+        break;
+      }
+    }
+  }
+  return values;
+}
 
 export const SimplePanel: React.FC<Props> = ({
   options,
@@ -37,19 +63,35 @@ export const SimplePanel: React.FC<Props> = ({
 }) => {
   const theme = useTheme2();
   const styles = useStyles2(getStyles);
-  const [isActive, setIsActive] = useState(false);
+  const [active, setActive] = useState(false);
 
-  // Handle no data case (real data handling bonus)
-  if (data.series.length === 0) {
-    return (
-      <PanelDataErrorView
-        fieldConfig={fieldConfig}
-        panelId={id}
-        data={data}
-        needsStringField
-      />
-    );
+  const numericValues = useMemo(() => extractNumericValues(data), [data]);
+  const total = useMemo(() => numericValues.reduce((a, b) => a + b, 0), [numericValues]);
+  const avg = useMemo(
+    () => (numericValues.length ? total / numericValues.length : 0),
+    [numericValues, total]
+  );
+
+  const insight = useMemo(() => {
+    if (!options.enableInsight) return null;
+    if (!numericValues.length) return 'Insight: Veri yok';
+    if (avg >= 75) return 'Insight: Yüksek seviye';
+    if (avg >= 40) return 'Insight: Orta seviye';
+    return 'Insight: Düşük seviye';
+  }, [options.enableInsight, numericValues.length, avg]);
+
+  if (!data.series || data.series.length === 0) {
+    return <PanelDataErrorView fieldConfig={fieldConfig} panelId={id} data={data} />;
   }
+
+  const accentColor = options.baseColor || theme.colors.primary.main;
+
+  /* 🔥 seriesCountSize mapping */
+  const seriesFontSize = {
+    sm: 11,
+    md: 14,
+    lg: 18,
+  }[options.seriesCountSize];
 
   return (
     <div
@@ -59,84 +101,77 @@ export const SimplePanel: React.FC<Props> = ({
           width: ${width}px;
           height: ${height}px;
           background: ${theme.colors.background.primary};
-          border-radius: 8px;
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-          overflow: hidden;
+          border: 1px solid ${theme.colors.border.weak};
         `
       )}
     >
-      {/* Background Visualization */}
-      <svg
-        className={styles.svg}
-        width={width}
-        height={height}
-        xmlns="http://www.w3.org/2000/svg"
-        viewBox={`-${width / 2} -${height / 2} ${width} ${height}`}
-      >
-        <g>
-          <circle
-            data-testid="simple-panel-circle"
-            r={120}
-            onClick={() => setIsActive(!isActive)}
-            style={{
-              fill: isActive
-                ? theme.colors.success.main
-                : theme.colors.primary.main,
-              opacity: 0.2,
-              cursor: 'pointer',
-              transition: 'fill 0.3s ease',
-            }}
-          />
-        </g>
-      </svg>
+      <div className={styles.content}>
+        {/* ================= DISPLAY MODE ================= */}
+        {options.mode === 'circle' && (
+          <svg width={width} height={height} onClick={() => setActive(!active)}>
+            <circle
+              cx={width / 2}
+              cy={height / 2}
+              r={Math.min(width, height) * 0.25}
+              fill={accentColor}
+              opacity={active ? 0.35 : 0.15}
+            />
+            <text
+              x={width / 2}
+              y={height / 2}
+              textAnchor="middle"
+              fontSize="16"
+              fontWeight="700"
+            >
+              Avg: {avg.toFixed(1)}
+            </text>
+          </svg>
+        )}
 
-      {/* Content */}
-      <div
-        className={styles.textBox}
-        style={{
-          background: theme.colors.background.secondary,
-          borderRadius: '6px',
-          padding: '12px',
-          maxWidth: '90%',
-        }}
-      >
-        <div
-          style={{
-            fontSize: '16px',
-            fontWeight: 600,
-            marginBottom: '6px',
-          }}
-        >
-          Custom Grafana Panel
-        </div>
+        {options.mode === 'bars' && (
+          <svg width={width} height={height}>
+            {numericValues.slice(0, 10).map((v, i) => (
+              <rect
+                key={i}
+                x={20 + i * 25}
+                y={height - v}
+                width={18}
+                height={v}
+                fill={accentColor}
+              />
+            ))}
+          </svg>
+        )}
 
-        {options.showSeriesCount && (
-          <div
-            data-testid="simple-panel-series-counter"
-            style={{ fontSize: '13px', marginBottom: '4px' }}
-          >
-            Number of series: {data.series.length}
+        {options.mode === 'text' && (
+          <div style={{ fontSize: 18, fontWeight: 600 }}>
+            {options.text} – Avg: {avg.toFixed(1)}
           </div>
         )}
 
-        <div style={{ fontSize: '13px', opacity: 0.8 }}>
-          Text option value: {options.text}
-        </div>
-
-        {/* REQUIRED: Student name visible in panel */}
+        {/* ================= INFO CARD ================= */}
         <div
+          className={styles.card}
           style={{
-            marginTop: '10px',
-            padding: '4px 8px',
-            display: 'inline-block',
-            fontSize: '12px',
-            fontWeight: 600,
-            borderRadius: '12px',
-            backgroundColor: theme.colors.primary.main,
-            color: theme.colors.primary.contrastText,
+            background: theme.colors.background.secondary,
+            border: `1px solid ${theme.colors.border.weak}`,
           }}
         >
-          Developed by Sudenur Tilla
+          <div
+            className={styles.pill}
+            style={{ background: accentColor, color: '#fff' }}
+          >
+            Developed by Sudenur Tilla
+          </div>
+
+          {options.showSeriesCount && (
+            <div style={{ fontSize: seriesFontSize }}>
+              Series count: {data.series.length}
+            </div>
+          )}
+
+          <div>Total: {total.toFixed(1)}</div>
+          {insight && <div style={{ marginTop: 6 }}>{insight}</div>}
         </div>
       </div>
     </div>

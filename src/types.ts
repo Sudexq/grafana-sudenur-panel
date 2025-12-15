@@ -1,7 +1,10 @@
-type SeriesSize = 'sm' | 'md' | 'lg';
+export type DisplayMode = 'circle' | 'bars' | 'text';
 
 export interface SimpleOptions {
   text: string;
   showSeriesCount: boolean;
-  seriesCountSize: SeriesSize;
+  seriesCountSize: 'sm' | 'md' | 'lg';
+  baseColor: string;
+  mode: DisplayMode;
+  enableInsight: boolean;
 }
